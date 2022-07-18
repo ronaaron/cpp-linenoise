@@ -132,6 +132,7 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#include <conio.h>
 #include <io.h>
 #ifndef STDIN_FILENO
 #define STDIN_FILENO (_fileno(stdin))
@@ -157,9 +158,93 @@
 #include <vector>
 #include <iostream>
 
+#ifndef ISWHITE
+#define ISWHITE(x) (x == 32 || (x >= 9 && x <= 13))
+#endif
+
 namespace linenoise {
+// track shift keys in 'keycodes'
+#define K_SHIFT     0x0100
+#define K_CTRL      0x0200
+#define K_ALT       0x0400
+
+// The codes begin at the Unicode "Private Use" area
+#define KEYCODE_BEGIN 0xe000
+
+// 1110100000000000
+// 0000000100000000
+
+#define NEWKEY(n) (KEYCODE_BEGIN+n)
+#define K_FIRST NEWKEY(0)
+#define K_ESC   NEWKEY(0)
+#define K_TAB   NEWKEY(1)
+#define K_F1    NEWKEY(2)
+#define K_F2    NEWKEY(3)
+#define K_F3    NEWKEY(4)
+#define K_F4    NEWKEY(5)
+#define K_F5    NEWKEY(6)
+#define K_F6    NEWKEY(7)
+#define K_F7    NEWKEY(8)
+#define K_F8    NEWKEY(9)
+#define K_F9    NEWKEY(10)
+#define K_F10    NEWKEY(11)
+#define K_F11    NEWKEY(12)
+#define K_F12    NEWKEY(13)
+#define K_UP    NEWKEY(14)
+#define K_DOWN    NEWKEY(15)
+#define K_LEFT    NEWKEY(16)
+#define K_RIGHT    NEWKEY(17)
+#define K_PGUP    NEWKEY(18)
+#define K_PGDN    NEWKEY(19)
+#define K_HOME    NEWKEY(20)
+#define K_END    NEWKEY(21)
+#define K_INS    NEWKEY(22)
+#define K_DEL    NEWKEY(23)
+// reserve A-Z
+#define K_A      NEWKEY(24)
+#define K_B      NEWKEY(25)
+#define K_C      NEWKEY(26)
+#define K_D      NEWKEY(27)
+#define K_E      NEWKEY(28)
+#define K_F      NEWKEY(29)
+#define K_G      NEWKEY(30)
+#define K_H      NEWKEY(31)
+#define K_I      NEWKEY(32)
+#define K_J      NEWKEY(33)
+#define K_K      NEWKEY(34)
+#define K_L      NEWKEY(35)
+#define K_M      NEWKEY(36)
+#define K_N      NEWKEY(37)
+#define K_O      NEWKEY(38)
+#define K_P      NEWKEY(39)
+#define K_Q      NEWKEY(40)
+#define K_R      NEWKEY(41)
+#define K_S      NEWKEY(42)
+#define K_T      NEWKEY(43)
+#define K_U      NEWKEY(44)
+#define K_V      NEWKEY(45)
+#define K_W      NEWKEY(46)
+#define K_X      NEWKEY(47)
+#define K_Y      NEWKEY(48)
+#define K_Z      NEWKEY(49)
+#define K_0      NEWKEY(50)
+#define K_1      NEWKEY(51)
+#define K_2      NEWKEY(52)
+#define K_3      NEWKEY(53)
+#define K_4      NEWKEY(54)
+#define K_5      NEWKEY(55)
+#define K_6      NEWKEY(56)
+#define K_7      NEWKEY(57)
+#define K_8      NEWKEY(58)
+#define K_9      NEWKEY(59)
+#define K_EQ     NEWKEY(60)
+#define K_MINUS  NEWKEY(61)
+#define K_BKSP   NEWKEY(62)
+#define K_UNKNOWN NEWKEY(63)
+#define KEYCODE_COUNT 64
 
 typedef std::function<void (const char*, std::vector<std::string>&)> CompletionCallback;
+typedef std::function<void ()> AlertCallback;
 
 #ifdef _WIN32
 
@@ -933,108 +1018,143 @@ HANDLE hOut;
 HANDLE hIn;
 DWORD consolemodeIn = 0;
 
-inline int win32read(int *c) {
+#define NUMVKEYS 0x7c
+static unsigned int vkmap[NUMVKEYS] =
+{
+	0,
+	0, //lbutton
+	0, 0, 0, 0, 0, 0,// mouse buttons
+	K_BKSP, // backspace
+	K_TAB, // tab
+	0, 0,
+	12, // ctrl-l (clear)
+	13, // return
+	0,0, 
+	0, // shift
+	0, // ctrl
+	0, // menu
+	0, // pause
+	0, // shift-lock
+	0, // kana/hangul
+	0,0, // junja
+	//
+	0, 0, 0, 
+	K_ESC,  // 27
+	0, 0, 0, 0,
+	32, 	// space
+	K_PGUP,
+	K_PGDN,
+	K_END,
+	K_HOME, // 36
+	K_LEFT,
+	K_UP,
+	K_RIGHT,
+	K_DOWN,  // 40
+	0, 0, 0, 0,
+	K_INS, K_DEL, 0, // help = 47
+	// digits 0x30 - 0x39
+	'0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+	0, 0, 0, 0, 0, 0, 0,
+	// alpha A-Z
+	K_A, K_B, K_C, K_D, K_E, K_F, K_G, K_H, K_I, K_J, K_K, K_L, K_M,
+	K_N, K_O, K_P, K_Q, K_R, K_S, K_T, K_U, K_V, K_W, K_X, K_Y, K_Z,
+	0, // lwin
+	0, // rwin
+	0, // apps
+	0, 0, // sleep
+	// numpad digits
+	'0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+	'*', '+', ',', '-', '.', '/',
+	K_F1, K_F2, K_F3, K_F4, K_F5, K_F6, K_F7, K_F8, K_F9, K_F10, K_F11, K_F12
+};
+static unsigned int processKeyEvent(KEY_EVENT_RECORD ker)
+{
+
+	unsigned int retval = 0;
+	unsigned int mods = 0;
+	if (LEFT_ALT_PRESSED & ker.dwControlKeyState || RIGHT_ALT_PRESSED & ker.dwControlKeyState)
+	{
+		mods |= K_ALT;
+	}
+	if (LEFT_CTRL_PRESSED & ker.dwControlKeyState || RIGHT_CTRL_PRESSED & ker.dwControlKeyState)
+	{
+		mods |= K_CTRL;
+	}
+	if (SHIFT_PRESSED & ker.dwControlKeyState)
+	{
+		mods |= K_SHIFT;
+	}
+
+	if (ker.uChar.UnicodeChar)
+	{
+		retval = ker.uChar.UnicodeChar;
+		if (retval == 8)
+		{
+			retval = K_BKSP;
+		} else if (retval == 9)
+		{
+			retval = K_TAB;
+		}
+		if (mods & K_CTRL)
+		{
+			if (retval >= 'a' && retval <= 'z')
+			{
+				retval -= 'a'+1;
+			}
+			else if (retval >= 'A' && retval <= 'Z')
+			{
+				retval -= 'A'+1;
+			}
+			if (mods & K_SHIFT)
+				mods = K_SHIFT;
+			else
+				mods = 0;
+		}
+		if (mods & K_SHIFT)
+		{
+			if (retval >= 'a' && retval <= 'z')
+			{
+				retval -= 0x20;
+			}
+			mods = 0;
+		}
+
+	}
+	else
+	{
+		if (ker.wVirtualKeyCode > 0 && ker.wVirtualKeyCode < NUMVKEYS)
+			retval = vkmap[ker.wVirtualKeyCode];
+		else
+			retval = K_UNKNOWN;
+	}
+	if (retval == 0) 
+	{
+		return retval;
+	}
+	else
+		return mods | retval;
+
+}
+inline int win32read() {
     DWORD foo;
     INPUT_RECORD b;
     KEY_EVENT_RECORD e;
     BOOL altgr;
 
     while (1) {
-        if (!ReadConsoleInput(hIn, &b, 1, &foo)) return 0;
-        if (!foo) return 0;
+        if (!ReadConsoleInputW(hIn, &b, 1, &foo) || !foo) break;
 
         if (b.EventType == KEY_EVENT && b.Event.KeyEvent.bKeyDown) {
 
             e = b.Event.KeyEvent;
-            *c = b.Event.KeyEvent.uChar.AsciiChar;
-
-            altgr = e.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_ALT_PRESSED);
-
-            if (e.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED) && !altgr) {
-
-                /* Ctrl+Key */
-                switch (*c) {
-                    case 'D':
-                        *c = 4;
-                        return 1;
-                    case 'C':
-                        *c = 3;
-                        return 1;
-                    case 'H':
-                        *c = 8;
-                        return 1;
-                    case 'T':
-                        *c = 20;
-                        return 1;
-                    case 'B': /* ctrl-b, left_arrow */
-                        *c = 2;
-                        return 1;
-                    case 'F': /* ctrl-f right_arrow*/
-                        *c = 6;
-                        return 1;
-                    case 'P': /* ctrl-p up_arrow*/
-                        *c = 16;
-                        return 1;
-                    case 'N': /* ctrl-n down_arrow*/
-                        *c = 14;
-                        return 1;
-                    case 'U': /* Ctrl+u, delete the whole line. */
-                        *c = 21;
-                        return 1;
-                    case 'K': /* Ctrl+k, delete from current to end of line. */
-                        *c = 11;
-                        return 1;
-                    case 'A': /* Ctrl+a, go to the start of the line */
-                        *c = 1;
-                        return 1;
-                    case 'E': /* ctrl+e, go to the end of the line */
-                        *c = 5;
-                        return 1;
-                }
-
-                /* Other Ctrl+KEYs ignored */
-            } else {
-
-                switch (e.wVirtualKeyCode) {
-
-                    case VK_ESCAPE: /* ignore - send ctrl-c, will return -1 */
-                        *c = 3;
-                        return 1;
-                    case VK_RETURN:  /* enter */
-                        *c = 13;
-                        return 1;
-                    case VK_LEFT:   /* left */
-                        *c = 2;
-                        return 1;
-                    case VK_RIGHT: /* right */
-                        *c = 6;
-                        return 1;
-                    case VK_UP:   /* up */
-                        *c = 16;
-                        return 1;
-                    case VK_DOWN:  /* down */
-                        *c = 14;
-                        return 1;
-                    case VK_HOME:
-                        *c = 1;
-                        return 1;
-                    case VK_END:
-                        *c = 5;
-                        return 1;
-                    case VK_BACK:
-                        *c = 8;
-                        return 1;
-                    case VK_DELETE:
-                        *c = 4; /* same as Ctrl+D above */
-                        return 1;
-                    default:
-                        if (*c) return 1;
-                }
-            }
+			if (!(e.wVirtualKeyCode >= 0x10 && e.wVirtualKeyCode <= 0x1a)) 
+			{
+				return processKeyEvent(e);
+			}
         }
     }
 
-    return -1; /* Makes compiler happy */
+    return 0;
 }
 
 inline int win32_write(int fd, const void *buffer, unsigned int count) {
@@ -1062,15 +1182,27 @@ inline int win32_write(int fd, const void *buffer, unsigned int count) {
 
 #define LINENOISE_DEFAULT_HISTORY_MAX_LEN 100
 #define LINENOISE_MAX_LINE 4096
+static size_t max_line_len = LINENOISE_MAX_LINE;
 static const char *unsupported_term[] = {"dumb","cons25","emacs",NULL};
 static CompletionCallback completionCallback;
-
+static AlertCallback alertCallback;
+static char mask_char = 0;
+void SetMask(char mask)
+{
+	mask_char = mask;
+}
+void SetMaxLineLen(size_t mc)
+{
+	if (mc <= LINENOISE_MAX_LINE)
+		max_line_len = mc;
+	else
+		max_line_len = LINENOISE_MAX_LINE;
+}
 #ifndef _WIN32
 static struct termios orig_termios; /* In order to restore at exit.*/
 #endif
 static bool rawmode = false; /* For atexit() function to check if restore is needed*/
 static bool mlmode = false;  /* Multi line mode. Default is single line. */
-static bool atexit_registered = false; /* Register atexit just 1 time. */
 static size_t history_max_len = LINENOISE_DEFAULT_HISTORY_MAX_LEN;
 static std::vector<std::string> history;
 
@@ -1109,6 +1241,7 @@ enum KEY_ACTION {
     CTRL_T = 20,        /* Ctrl-t */
     CTRL_U = 21,        /* Ctrl+u */
     CTRL_W = 23,        /* Ctrl+w */
+    CTRL_X = 24,        /* Ctrl+w */
     ESC = 27,           /* Escape */
     BACKSPACE =  127    /* Backspace */
 };
@@ -1380,6 +1513,39 @@ inline int unicodeUTF8CharLen(char* buf, int buf_len, int pos)
     else { return 4; }
 }
 
+/* Convert Unicode code point to UTF8, returning number of characters output
+ */
+static int UTFbytes(int c, char *buf)
+{
+	if (c < 0x80)		/* 7 bits */
+	{
+		buf[0] = c;
+		return 1;
+	}
+	if (c < 0x800)		/* 11 bits */
+	{
+		buf[0] = 0xc0 + ((unsigned)c >> 6);
+		buf[1] = 0x80 + (c & 0x3f);
+		return 2;
+	}
+	if (c < 0x10000)		/* 16 bits */
+	{
+		buf[0] = 0xe0 + ((unsigned)c >> 12);
+		buf[1] = 0x80 + (((unsigned)c >> 6) & 0x3f);
+		buf[2] = 0x80 + (c & 0x3f);
+		return 3;
+	}
+	if (c < 0x200000)		/* 21 bits */
+	{
+		buf[0] = 0xf0 + ((unsigned)c >> 18);
+		buf[1] = 0x80 + (((unsigned)c >> 12) & 0x3f);
+		buf[2] = 0x80 + (((unsigned)c >> 6) & 0x3f);
+		buf[3] = 0x80 + (c & 0x3f);
+		return 4;
+	}
+	return 0;
+}
+
 /* Convert UTF8 to Unicode code point
  */
 inline int unicodeUTF8CharToCodePoint(
@@ -1591,17 +1757,42 @@ inline bool isUnsupportedTerm(void) {
     return false;
 }
 
-/* Raw mode: 1960 magic shit. */
-inline bool enableRawMode(int fd) {
-#ifndef _WIN32
-    struct termios raw;
+// should be called exactly once, before any console I/O. Returns false if cannot init (not a terminal, etc.)
+bool linenoiseInit() 
+{
+	static bool atexit_registered = false; /* Register atexit just 1 time. */
+	// already called this function, and succeeded
+	if (atexit_registered) return true;
 
+#ifndef _WIN32
     if (!isatty(STDIN_FILENO)) goto fatal;
-    if (!atexit_registered) {
-        atexit(linenoiseAtExit);
-        atexit_registered = true;
+    if (tcgetattr(STDIN_FILENO,&orig_termios) == -1) goto fatal;
+
+#else
+	/* Init windows console handles only once */
+	hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+	if (hOut == INVALID_HANDLE_VALUE) goto fatal;
+
+	hIn = GetStdHandle(STD_INPUT_HANDLE);
+	if (hIn == INVALID_HANDLE_VALUE) {
+		CloseHandle(hOut);
+		goto fatal;
     }
-    if (tcgetattr(fd,&orig_termios) == -1) goto fatal;
+#endif
+	atexit(linenoiseAtExit);
+	atexit_registered = true;
+	return true;
+
+fatal:
+    errno = ENOTTY;
+    return false;
+}
+
+/* Raw mode: 1960 magic shit. */
+inline bool enableRawMode() {
+#ifndef _WIN32
+	int fd = STDIN_FILENO;
+    struct termios raw;
 
     raw = orig_termios;  /* modify the original mode */
     /* input modes: no break, no CR to NL, no parity check, no strip char,
@@ -1623,29 +1814,6 @@ inline bool enableRawMode(int fd) {
     if (tcsetattr(fd,TCSAFLUSH,&raw) < 0) goto fatal;
     rawmode = true;
 #else
-    if (!atexit_registered) {
-        /* Cleanup them at exit */
-        atexit(linenoiseAtExit);
-        atexit_registered = true;
-
-        /* Init windows console handles only once */
-        hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-        if (hOut==INVALID_HANDLE_VALUE) goto fatal;
-    }
-
-    DWORD consolemodeOut;
-    if (!GetConsoleMode(hOut, &consolemodeOut)) {
-        CloseHandle(hOut);
-        errno = ENOTTY;
-        return false;
-    };
-
-    hIn = GetStdHandle(STD_INPUT_HANDLE);
-    if (hIn == INVALID_HANDLE_VALUE) {
-        CloseHandle(hOut);
-        errno = ENOTTY;
-        return false;
-    }
 
     GetConsoleMode(hIn, &consolemodeIn);
     /* Enable raw mode */
@@ -1660,7 +1828,8 @@ fatal:
     return false;
 }
 
-inline void disableRawMode(int fd) {
+inline void disableRawMode() {
+	int fd = STDIN_FILENO;
 #ifdef _WIN32
     if (consolemodeIn) {
       SetConsoleMode(hIn, consolemodeIn);
@@ -1751,8 +1920,216 @@ inline void linenoiseClearScreen(void) {
 /* Beep, used for completion when there is nothing to complete or when all
  * the choices were already shown. */
 inline void linenoiseBeep(void) {
-    fprintf(stderr, "\x7");
-    fflush(stderr);
+	alertCallback();
+}
+
+/* keyboard functionality */
+#ifndef _WIN32
+static unsigned int key_modifier(unsigned char *in)
+{
+	unsigned int mod = 0;
+	if (in[0] == 0x3b)
+	{
+		switch (in[1]) {
+			case 0x32: mod =  K_SHIFT; break;
+			case 0x33: mod =  K_ALT; break;
+			case 0x34: mod =  K_ALT|K_SHIFT; break;
+			case 0x35: mod =  K_CTRL; break;
+			case 0x36: mod =  K_CTRL|K_SHIFT; break;
+			case 0x37: mod =  K_ALT|K_CTRL; break;
+			case 0x38: mod =  K_ALT|K_CTRL|K_SHIFT; break;
+		}
+	}
+	return mod;
+}
+
+// SS2: ESC N  (1b 4e)
+// SS3: ESC O  (1b 4f)
+static unsigned int key_ss3(unsigned char *in, int count)
+{
+	unsigned int mod = 0;
+	unsigned int retval = K_UNKNOWN;
+	char k =0;
+	mod = key_modifier(in+count-3);
+	k = in[count-1];
+
+	switch (k) {
+		case 0x48: retval = K_HOME; break;
+		case 0x46: retval = K_END; break;
+		case 0x50: retval = K_F1; break;
+		case 0x51: retval = K_F2; break;
+		case 0x52: retval = K_F3; break;
+		case 0x53: retval = K_F4; break;
+	}
+	return mod | retval;
+}
+
+// CSI: ESC [  (1b 5b) 
+static unsigned int key_csi(unsigned char *in, int count)
+{
+	unsigned int mod = 0;
+	unsigned int retval = 0;
+	char k =in[1];
+	char c2 = in[2];
+	if (count == 1)
+	{
+		return K_ALT | K_ESC;
+	}
+	if (count > 2)
+	{
+		k = in[count-1];
+		mod = key_modifier(in+count-3);
+	}
+
+	switch (k) {
+		case 'A': retval = K_UP; break;
+		case 'B': retval = K_DOWN; break;
+		case 'C': retval = K_RIGHT; break;
+		case 'D': retval = K_LEFT; break;
+		case 0x5a: retval = K_SHIFT|K_TAB; break;
+		case 0x5b: 
+				   switch (c2) {
+				   }
+				   break;
+		case 0x7e:
+				   switch (in[1]) {
+					   case '1':
+						   switch (c2) {
+							   case 0x35: retval = K_F5; break;
+							   case 0x37: retval = K_F6; break;
+							   case 0x38: retval = K_F7; break;
+							   case 0x39: retval = K_F8; break;
+						   }
+						   break;
+					   case '2':
+						   if (count == 3) 
+							   retval = K_INS; 
+						   else
+						   {
+							   switch (c2) {
+								   case 0x30: retval = K_F9; break;
+								   case 0x31: retval = K_F10; break;
+								   case 0x33: retval = K_F11; break;
+								   case 0x34: retval = K_F12; break;
+							   }
+						   }
+						   break;
+					   case '3': 
+						   retval = K_DEL; 
+						   break;
+					   case '5': 
+						   retval = K_PGUP; 
+						   break;
+					   case '6': 
+						   retval = K_PGDN; 
+						   break;
+				   }
+
+	}
+	return mod | retval;
+}
+
+#endif
+static int internal_iskey()
+{
+#ifdef _WIN32
+	return _kbhit();
+#else
+	int toread  = 0;
+	ioctl(0, FIONREAD, &toread);
+	return toread;
+#endif
+}
+
+/* requires that  enableRawMode() has been done prior */
+int internal_key()
+{
+	int c = 0;
+#ifdef _WIN32
+	c = win32read();
+#else
+	unsigned char ch[8];
+	int nread = unicodeReadUTF8Char(1,(char*) ch,&c);
+	if (nread>0)
+	{
+		if (c == 27)
+		{
+			int avail = internal_iskey();
+			if (avail)
+			{
+				if (avail>8) avail=8;
+				nread = read(1, ch, avail);
+				char c2 = ch[0];
+#if 0
+printf("ESC:");
+for (unsigned int i=0; i<nread; i++)
+{
+	printf(" %02x", ch[i]);
+}
+printf("\n");
+#endif
+				// figure out what the input is
+				switch (c2) {
+					case 0x4f: // SS3
+						c = key_ss3(ch, nread);
+						break;
+					case 0x5b: // CSI
+						c = key_csi(ch, nread);
+						break;
+					default:
+						{
+							if (c2 <= 26)
+							{
+								c = K_CTRL | K_ALT | ( K_A + ((c2 - 1)));
+							}
+							else if (c2 >= 'A' && c2 <= 'Z')
+							{
+								c = K_SHIFT | K_ALT | ( K_A + ((c2 - 'A')));
+							}
+							else if (c2>='a' && c2<= 'z')
+							{
+								c = K_ALT | ( K_A + ((c2 - 'a')));
+							}
+							else if (c2>='0' && c2<='9')
+							{
+								c = K_ALT | ( K_0 + ((c2 - '0')));
+							}
+							else
+							{
+								switch (c2) {
+									case 0x1b: 
+										if (nread > 1)
+										{
+											c = K_ALT + ch[nread-1];
+										}
+										else
+											c = K_ALT + K_ESC; 
+										break;
+									case '-': c = K_ALT + K_MINUS; break;
+									case '=': c = K_ALT + K_EQ; break;
+									case 0x7f: c = K_ALT + K_BKSP; break;
+									default: c = K_ALT + c2; break;
+								}
+							}
+						}
+						break;
+
+				}
+			}
+		}
+	}
+#endif
+	return c;
+}
+uint32_t key()
+{
+	uint32_t c = 0;
+	if (enableRawMode())
+	{
+		c =  internal_key();
+		disableRawMode();
+	}
+	return c;
 }
 
 /* ============================== Completion ================================ */
@@ -1763,7 +2140,7 @@ inline void linenoiseBeep(void) {
  *
  * The state of the editing is encapsulated into the pointed linenoiseState
  * structure as described in the structure definition. */
-inline int completeLine(struct linenoiseState *ls, char *cbuf, int *c) {
+inline int completeLine(struct linenoiseState *ls, int *c) {
     std::vector<std::string> lc;
     int nread = 0, nwritten;
     *c = 0;
@@ -1789,26 +2166,16 @@ inline int completeLine(struct linenoiseState *ls, char *cbuf, int *c) {
                 refreshLine(ls);
             }
 
-            //nread = read(ls->ifd,&c,1);
-#ifdef _WIN32
-            nread = win32read(c);
-            if (nread == 1) {
-                cbuf[0] = *c;
-            }
-#else
-            nread = unicodeReadUTF8Char(ls->ifd,cbuf,c);
-#endif
-            if (nread <= 0) {
-                *c = -1;
-                return nread;
-            }
+			*c = internal_key();
+			if (!*c) return 0;
 
             switch(*c) {
-                case 9: /* tab */
+                case K_TAB: /* tab */
+                case TAB: /* tab */
                     i = (i+1) % (lc.size()+1);
                     if (i == static_cast<int>(lc.size())) linenoiseBeep();
                     break;
-                case 27: /* escape */
+                case ESC: /* escape */
                     /* Re-show original buffer */
                     if (i < static_cast<int>(lc.size())) refreshLine(ls);
                     stop = 1;
@@ -1826,6 +2193,11 @@ inline int completeLine(struct linenoiseState *ls, char *cbuf, int *c) {
     }
 
     return nread;
+}
+
+/* Register a callback function to be called for alerts. */
+inline void SetAlertCallback(AlertCallback fn) {
+    alertCallback = fn;
 }
 
 /* Register a callback function to be called for tab-completion. */
@@ -1863,7 +2235,11 @@ inline void refreshSingleLine(struct linenoiseState *l) {
     ab += seq;
     /* Write the prompt and the current buffer content */
     ab += l->prompt;
-    ab.append(buf, len);
+	if (mask_char) {
+		ab.append(len, mask_char);
+	} else {
+    	ab.append(buf, len);
+	}
     /* Erase to right */
     snprintf(seq,64,"\x1b[0K");
     ab += seq;
@@ -1912,7 +2288,11 @@ inline void refreshMultiLine(struct linenoiseState *l) {
 
     /* Write the prompt and the current buffer content */
     ab += l->prompt;
-    ab.append(l->buf, l->len);
+	if (mask_char) {
+		ab.append(l->len, mask_char);
+	} else {
+    	ab.append(l->buf, l->len);
+	}
 
     /* Get text width to cursor position */
     colpos2 = unicodeColumnPosForMultiLine(l->buf, l->len, l->pos, l->cols, pcolwid);
@@ -1964,7 +2344,10 @@ inline void refreshLine(struct linenoiseState *l) {
 /* Insert the character 'c' at cursor current position.
  *
  * On error writing to the terminal -1 is returned, otherwise 0. */
-inline int linenoiseEditInsert(struct linenoiseState *l, const char* cbuf, int clen) {
+inline int linenoiseEditInsert(struct linenoiseState *l, int unicode) {
+	char cbuf[6];  
+	int clen = UTFbytes(unicode, cbuf);
+
     if (l->len < l->buflen) {
         if (l->len == l->pos) {
             memcpy(&l->buf[l->pos],cbuf,clen);
@@ -1974,7 +2357,14 @@ inline int linenoiseEditInsert(struct linenoiseState *l, const char* cbuf, int c
             if ((!mlmode && unicodeColumnPos(l->prompt.c_str(), static_cast<int>(l->prompt.length()))+unicodeColumnPos(l->buf,l->len) < l->cols) /* || mlmode */) {
                 /* Avoid a full update of the line in the
                  * trivial case. */
-                if (write(l->ofd,cbuf,clen) == -1) return -1;
+				if (mask_char)
+				{
+					for (int x=0; x<clen; x++) write(l->ofd, &mask_char, 1);
+				}
+				else
+				{
+					if (write(l->ofd,cbuf,clen) == -1) return -1;
+				}
             } else {
                 refreshLine(l);
             }
@@ -1986,22 +2376,38 @@ inline int linenoiseEditInsert(struct linenoiseState *l, const char* cbuf, int c
             l->buf[l->len] = '\0';
             refreshLine(l);
         }
-    }
+	}
     return 0;
 }
 
 /* Move cursor on the left. */
-inline void linenoiseEditMoveLeft(struct linenoiseState *l) {
+inline void linenoiseEditMoveLeft(struct linenoiseState *l, bool word = false) {
     if (l->pos > 0) {
-        l->pos -= unicodePrevGraphemeLen(l->buf, l->pos);
+		if (word) {
+			while (l->pos > 0 && ISWHITE(l->buf[l->pos-1]))
+				l->pos--;
+			while (l->pos > 0 && !ISWHITE(l->buf[l->pos-1]))
+        		l->pos -= unicodePrevGraphemeLen(l->buf, l->pos);
+		} else {
+        	l->pos -= unicodePrevGraphemeLen(l->buf, l->pos);
+		}
         refreshLine(l);
     }
 }
 
 /* Move cursor on the right. */
-inline void linenoiseEditMoveRight(struct linenoiseState *l) {
+inline void linenoiseEditMoveRight(struct linenoiseState *l, bool word = false) {
     if (l->pos != l->len) {
-        l->pos += unicodeGraphemeLen(l->buf, l->len, l->pos);
+		if (word) {
+			while (l->pos != l->len && ISWHITE(l->buf[l->pos]))
+				l->pos++;
+			while (l->pos != l->len && !ISWHITE(l->buf[l->pos]))
+        		l->pos += unicodeGraphemeLen(l->buf, l->len, l->pos);
+			while (l->pos != l->len && ISWHITE(l->buf[l->pos]))
+				l->pos++;
+		} else {
+        	l->pos += unicodeGraphemeLen(l->buf, l->len, l->pos);
+		}
         refreshLine(l);
     }
 }
@@ -2086,6 +2492,12 @@ inline void linenoiseEditDeletePrevWord(struct linenoiseState *l) {
     l->len -= diff;
     refreshLine(l);
 }
+enum LINENOISE_RESULT {
+	LN_QUIT = -3,
+	LN_UNSUPPORTED = -2,
+	LN_ERROR = -1,
+	LN_OK = 0, 
+};
 
 /* This function is the core of the line editing capability of linenoise.
  * It expects 'fd' to be already in "raw mode" so that every key pressed
@@ -2095,7 +2507,7 @@ inline void linenoiseEditDeletePrevWord(struct linenoiseState *l) {
  * when ctrl+d is typed.
  *
  * The function returns the length of the current buffer. */
-inline int linenoiseEdit(int stdin_fd, int stdout_fd, char *buf, int buflen, const char *prompt)
+inline int linenoiseEdit(int stdin_fd, int stdout_fd, char *buf, int buflen, const char *prompt, bool start_line = false)
 {
     struct linenoiseState l;
 
@@ -2120,157 +2532,143 @@ inline int linenoiseEdit(int stdin_fd, int stdout_fd, char *buf, int buflen, con
      * initially is just an empty string. */
     AddHistory("");
 
+	if (start_line)
+	{
+		int here = getCursorPosition(l.ifd,l.ofd);
+		if (here>1)
+		{
+			write(l.ofd, "\r\n", 2);
+		}
+	}
+
     if (write(l.ofd,prompt, static_cast<int>(l.prompt.length())) == -1) return -1;
     while(1) {
         int c;
-        char cbuf[4];
         int nread;
-        char seq[3];
-
-#ifdef _WIN32
-        nread = win32read(&c);
-        if (nread == 1) {
-            cbuf[0] = c;
-        }
-#else
-        nread = unicodeReadUTF8Char(l.ifd,cbuf,&c);
-#endif
-        if (nread <= 0) return (int)l.len;
+		c = internal_key();
+        if (!c) return (int)l.len;
 
         /* Only autocomplete when the callback is set. It returns < 0 when
          * there was an error reading from fd. Otherwise it will return the
          * character that should be handled next. */
-        if (c == 9 && completionCallback != NULL) {
-            nread = completeLine(&l,cbuf,&c);
-            /* Return on errors */
-            if (c < 0) return l.len;
-            /* Read next character when 0 */
-            if (c == 0) continue;
-        }
+		if ((c == TAB || c == K_TAB) && completionCallback != NULL) {
+			nread = completeLine(&l,&c);
+			/* Return on errors */
+			if (c < 0) return l.len;
+			/* Read next character when 0 */
+			if (c == 0) continue;
+		}
 
         switch(c) {
-        case ENTER:    /* enter */
-            if (!history.empty()) history.pop_back();
-            if (mlmode) linenoiseEditMoveEnd(&l);
-            return (int)l.len;
-        case CTRL_C:     /* ctrl-c */
-            errno = EAGAIN;
-            return -1;
-        case BACKSPACE:   /* backspace */
-        case 8:     /* ctrl-h */
-            linenoiseEditBackspace(&l);
-            break;
-        case CTRL_D:     /* ctrl-d, remove char at right of cursor, or if the
-                            line is empty, act as end-of-file. */
-            if (l.len > 0) {
-                linenoiseEditDelete(&l);
-            } else {
-                history.pop_back();
-                return -1;
-            }
-            break;
-        case CTRL_T:    /* ctrl-t, swaps current character with previous. */
-            if (l.pos > 0 && l.pos < l.len) {
-                char aux = buf[l.pos-1];
-                buf[l.pos-1] = buf[l.pos];
-                buf[l.pos] = aux;
-                if (l.pos != l.len-1) l.pos++;
-                refreshLine(&l);
-            }
-            break;
-        case CTRL_B:     /* ctrl-b */
-            linenoiseEditMoveLeft(&l);
-            break;
-        case CTRL_F:     /* ctrl-f */
-            linenoiseEditMoveRight(&l);
-            break;
-        case CTRL_P:    /* ctrl-p */
-            linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_PREV);
-            break;
-        case CTRL_N:    /* ctrl-n */
-            linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_NEXT);
-            break;
-        case ESC:    /* escape sequence */
-            /* Read the next two bytes representing the escape sequence.
-             * Use two calls to handle slow terminals returning the two
-             * chars at different times. */
-            if (read(l.ifd,seq,1) == -1) break;
-            if (read(l.ifd,seq+1,1) == -1) break;
+			case ENTER:    /* enter */
+				if (!history.empty()) history.pop_back();
+				if (mlmode) linenoiseEditMoveEnd(&l);
+				return (int)l.len;
 
-            /* ESC [ sequences. */
-            if (seq[0] == '[') {
-                if (seq[1] >= '0' && seq[1] <= '9') {
-                    /* Extended escape, read additional byte. */
-                    if (read(l.ifd,seq+2,1) == -1) break;
-                    if (seq[2] == '~') {
-                        switch(seq[1]) {
-                        case '3': /* Delete key. */
-                            linenoiseEditDelete(&l);
-                            break;
-                        }
-                    }
-                } else {
-                    switch(seq[1]) {
-                    case 'A': /* Up */
-                        linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_PREV);
-                        break;
-                    case 'B': /* Down */
-                        linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_NEXT);
-                        break;
-                    case 'C': /* Right */
-                        linenoiseEditMoveRight(&l);
-                        break;
-                    case 'D': /* Left */
-                        linenoiseEditMoveLeft(&l);
-                        break;
-                    case 'H': /* Home */
-                        linenoiseEditMoveHome(&l);
-                        break;
-                    case 'F': /* End*/
-                        linenoiseEditMoveEnd(&l);
-                        break;
-                    }
-                }
-            }
+			case CTRL_C:     /* ctrl-c */
+				errno = EAGAIN;
+				return 0;
 
-            /* ESC O sequences. */
-            else if (seq[0] == 'O') {
-                switch(seq[1]) {
-                case 'H': /* Home */
-                    linenoiseEditMoveHome(&l);
-                    break;
-                case 'F': /* End*/
-                    linenoiseEditMoveEnd(&l);
-                    break;
-                }
-            }
-            break;
-        default:
-            if (linenoiseEditInsert(&l,cbuf,nread)) return -1;
-            break;
-        case CTRL_U: /* Ctrl+u, delete the whole line. */
-            buf[0] = '\0';
-            l.pos = l.len = 0;
-            refreshLine(&l);
-            break;
-        case CTRL_K: /* Ctrl+k, delete from current to end of line. */
-            buf[l.pos] = '\0';
-            l.len = l.pos;
-            refreshLine(&l);
-            break;
-        case CTRL_A: /* Ctrl+a, go to the start of the line */
-            linenoiseEditMoveHome(&l);
-            break;
-        case CTRL_E: /* ctrl+e, go to the end of the line */
-            linenoiseEditMoveEnd(&l);
-            break;
-        case CTRL_L: /* ctrl+l, clear screen */
-            linenoiseClearScreen();
-            refreshLine(&l);
-            break;
-        case CTRL_W: /* ctrl+w, delete previous word */
-            linenoiseEditDeletePrevWord(&l);
-            break;
+			case K_BKSP:   /* backspace */
+			case BACKSPACE:   /* backspace */
+			case CTRL_H:     /* ctrl-h */
+				linenoiseEditBackspace(&l);
+				break;
+
+			case CTRL_D:
+				// signal leave
+				return LN_QUIT;
+				break;
+
+			case K_DEL:
+			case CTRL_X:     /* ctrl-x, remove char at right of cursor, or if the
+								line is empty, act as end-of-file. */
+				if (l.len > 0) {
+					linenoiseEditDelete(&l);
+				} else {
+					history.pop_back();
+					return LN_ERROR;
+				}
+				break;
+
+			case CTRL_T:    /* ctrl-t, swaps current character with previous. */
+				if (l.pos > 0 && l.pos < l.len) {
+					char aux = buf[l.pos-1];
+					buf[l.pos-1] = buf[l.pos];
+					buf[l.pos] = aux;
+					if (l.pos != l.len-1) l.pos++;
+					refreshLine(&l);
+				}
+				break;
+
+			case K_UP:
+			case CTRL_P:    /* ctrl-p */
+				linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_PREV);
+				break;
+
+			case K_DOWN:
+			case CTRL_N:    /* ctrl-n */
+				linenoiseEditHistoryNext(&l, LINENOISE_HISTORY_NEXT);
+				break;
+
+
+			case K_LEFT|K_CTRL:
+				linenoiseEditMoveLeft(&l,true);
+				break;
+			case K_RIGHT|K_CTRL:
+				linenoiseEditMoveRight(&l,true);
+				break;
+
+			case K_LEFT:
+			case CTRL_B:     /* ctrl-b */
+				linenoiseEditMoveLeft(&l);
+				break;
+
+			case K_RIGHT:
+			case CTRL_F:     /* ctrl-f */
+				linenoiseEditMoveRight(&l);
+				break;
+
+			case K_HOME: /* Home */
+			case CTRL_A: /* Ctrl+a, go to the start of the line */
+				linenoiseEditMoveHome(&l);
+				break;
+
+			case K_END: /* End*/
+			case CTRL_E: /* ctrl+e, go to the end of the line */
+				linenoiseEditMoveEnd(&l);
+				break;
+
+			case ESC:
+			case CTRL_U: /* Ctrl+u, delete the whole line. */
+				buf[0] = '\0';
+				l.pos = l.len = 0;
+				refreshLine(&l);
+				break;
+
+			case CTRL_K: /* Ctrl+k, delete from current to end of line. */
+				buf[l.pos] = '\0';
+				l.len = l.pos;
+				refreshLine(&l);
+				break;
+
+			case CTRL_L: /* ctrl+l, clear screen */
+				linenoiseClearScreen();
+				refreshLine(&l);
+				break;
+
+			case CTRL_W: /* ctrl+w, delete previous word */
+				linenoiseEditDeletePrevWord(&l);
+				break;
+
+			case TAB|K_SHIFT:
+			case K_TAB|K_SHIFT:
+				c = 9;
+				// fall through
+			default:
+				if ( linenoiseEditInsert(&l,c)) return LN_ERROR;
+				if (l.len == buflen-1) return (int)l.len;
+				break;
         }
     }
     return l.len;
@@ -2278,30 +2676,34 @@ inline int linenoiseEdit(int stdin_fd, int stdout_fd, char *buf, int buflen, con
 
 /* This function calls the line editing function linenoiseEdit() using
  * the STDIN file descriptor set in raw mode. */
-inline bool linenoiseRaw(const char *prompt, std::string& line) {
-    bool quit = false;
+
+inline LINENOISE_RESULT linenoiseRaw(const char *prompt, std::string& line, bool start_line) {
+    LINENOISE_RESULT rc = LN_UNSUPPORTED;
 
     if (!isatty(STDIN_FILENO)) {
         /* Not a tty: read from file / pipe. */
         std::getline(std::cin, line);
     } else {
         /* Interactive editing. */
-        if (enableRawMode(STDIN_FILENO) == false) {
-            return quit;
+        if (enableRawMode() == false) {
+            return rc;
         }
-
         char buf[LINENOISE_MAX_LINE];
-        auto count = linenoiseEdit(STDIN_FILENO, STDOUT_FILENO, buf, LINENOISE_MAX_LINE, prompt);
-        if (count == -1) {
-            quit = true;
-        } else {
-            line.assign(buf, count);
-        }
+        auto count = linenoiseEdit(STDIN_FILENO, STDOUT_FILENO, buf, max_line_len, prompt, start_line);
+		if (count>=0)
+		{
+			rc = LN_OK;
+			line.assign(buf, count);
+		}
+		else
+		{
+			rc = (LINENOISE_RESULT) count;
+		}
 
-        disableRawMode(STDIN_FILENO);
+        disableRawMode();
         printf("\n");
     }
-    return quit;
+    return rc;
 }
 
 /* The high level function that is the main API of the linenoise library.
@@ -2309,33 +2711,23 @@ inline bool linenoiseRaw(const char *prompt, std::string& line) {
  * for a blacklist of stupid terminals, and later either calls the line
  * editing function or uses dummy fgets() so that you will be able to type
  * something even in the most desperate of the conditions. */
-inline bool Readline(const char *prompt, std::string& line) {
+inline LINENOISE_RESULT Readline(const char *prompt, std::string& line, bool start_line = false) {
     if (isUnsupportedTerm()) {
+		if (start_line) printf("\n");
         printf("%s",prompt);
         fflush(stdout);
         std::getline(std::cin, line);
-        return false;
+        return LN_UNSUPPORTED;
     } else {
-        return linenoiseRaw(prompt, line);
+        return linenoiseRaw(prompt, line, start_line);
     }
-}
-
-inline std::string Readline(const char *prompt, bool& quit) {
-    std::string line;
-    quit = Readline(prompt, line);
-    return line;
-}
-
-inline std::string Readline(const char *prompt) {
-    bool quit; // dummy
-    return Readline(prompt, quit);
 }
 
 /* ================================ History ================================= */
 
 /* At exit we'll try to fix the terminal to the initial conditions. */
 inline void linenoiseAtExit(void) {
-    disableRawMode(STDIN_FILENO);
+    disableRawMode();
 }
 
 /* This is the API call to add a new entry in the linenoise history.
